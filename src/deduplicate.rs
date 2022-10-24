@@ -17,6 +17,8 @@ const DEFAULT_CACHE_CAPACITY: usize = 512;
 pub enum DeduplicateError {
     #[error("Delegated retrieve failed")]
     Failed,
+    #[error("Cache not enabled")]
+    NoCache,
     #[error("Delegated retrieve not found")]
     NotFound,
 }
@@ -146,6 +148,16 @@ where
                 }
                 res
             }
+        }
+    }
+
+    /// Insert an entry directly into the cache.
+    pub fn insert(&mut self, key: K, value: V) -> Result<(), DeduplicateError> {
+        if let Some(storage) = &self.storage {
+            storage.insert(key, value);
+            Ok(())
+        } else {
+            Err(DeduplicateError::NoCache)
         }
     }
 }
