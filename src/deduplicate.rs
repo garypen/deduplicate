@@ -27,7 +27,7 @@ pub enum DeduplicateError {
 ///
 /// This is the slow or expensive get that we are de-duplicating.
 #[async_trait::async_trait]
-pub trait Retriever {
+pub trait Retriever: Send + Sync {
     type Key;
     type Value;
 
@@ -39,7 +39,7 @@ pub trait Retriever {
 /// When trying to avoid multiple slow or expensive retrievals, use this.
 #[derive(Clone)]
 pub struct Deduplicate<K: Clone + Send + Eq + Hash, V: Clone + Send> {
-    retriever: Arc<(dyn Retriever<Key = K, Value = V> + Send + Sync)>,
+    retriever: Arc<dyn Retriever<Key = K, Value = V>>,
     storage: Option<Cache<K, V>>,
     wait_map: WaitMap<K, V>,
 }
@@ -50,14 +50,14 @@ where
     V: Clone + Send + 'static,
 {
     /// Create a new deduplicator for the provided retriever with default cache capacity: 512.
-    pub async fn new(retriever: Arc<dyn Retriever<Key = K, Value = V> + Send + Sync>) -> Self {
+    pub async fn new(retriever: Arc<dyn Retriever<Key = K, Value = V>>) -> Self {
         Self::with_capacity(retriever, DEFAULT_CACHE_CAPACITY).await
     }
 
     /// Create a new deduplicator for the provided retriever with specified cache capacity.
     /// Note: If capacity is 0, then caching is disabled.
     pub async fn with_capacity(
-        retriever: Arc<dyn Retriever<Key = K, Value = V> + Send + Sync>,
+        retriever: Arc<dyn Retriever<Key = K, Value = V>>,
         capacity: usize,
     ) -> Self {
         let storage = if capacity > 0 {
@@ -73,10 +73,7 @@ where
     }
 
     /// Update the retriever to use for future gets. This will also clear the internal cache.
-    pub fn set_retriever(
-        &mut self,
-        retriever: Arc<dyn Retriever<Key = K, Value = V> + Send + Sync>,
-    ) {
+    pub fn set_retriever(&mut self, retriever: Arc<dyn Retriever<Key = K, Value = V>>) {
         self.clear();
         self.retriever = retriever;
     }
