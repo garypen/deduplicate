@@ -2,6 +2,16 @@
 name = "deduplicate"
 version = "0.1.0"
 edition = "2021"
+description = "deduplicating crate"
+authors = [
+  "garypen <garypen@gmail.com>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/garypen/deduplicate"
+readme = "README.md"
+keywords = ["deduplicate", "coalesce", "delegate", "caching"]
+categories = ["caching"]
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
