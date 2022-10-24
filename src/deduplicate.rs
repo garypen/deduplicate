@@ -46,7 +46,7 @@ pub struct Deduplicate<K: Clone + Send + Eq + Hash, V: Clone + Send> {
 
 impl<K, V> Deduplicate<K, V>
 where
-    K: Clone + Send + Eq + Hash + 'static,
+    K: Clone + Send + Eq + Hash + 'static + std::fmt::Debug,
     V: Clone + Send + 'static,
 {
     /// Create a new deduplicator for the provided retriever with default cache capacity: 512.
@@ -105,9 +105,12 @@ where
                         .map_err(|_| DeduplicateError::Failed)?
                         .ok_or(DeduplicateError::NotFound)
                 } else {
-                    // Because we clean up the wait map from the receiver, it will be a logic error
-                    // if we end up here. Panic is the best choice so the bug can be fixed.
-                    panic!("a stray waiter is still in the wait map for one of our keys");
+                    // We try to clean up the wait map from the receiver, but it may fail. If it
+                    // does we'll end up here. In which case, clean up the wait map and let the
+                    // client know that this request failed.
+                    tracing::warn!("a stray waiter is still in the wait map for one of our keys");
+                    let _ = locked_wait_map.remove(key);
+                    Err(DeduplicateError::Failed)
                 }
             }
             None => {
