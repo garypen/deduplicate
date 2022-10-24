@@ -46,7 +46,7 @@ pub struct Deduplicate<K: Clone + Send + Eq + Hash, V: Clone + Send> {
 
 impl<K, V> Deduplicate<K, V>
 where
-    K: Clone + Send + Eq + Hash + 'static + std::fmt::Debug,
+    K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
     /// Create a new deduplicator for the provided retriever with default cache capacity: 512.
@@ -108,7 +108,7 @@ where
                     // We try to clean up the wait map from the receiver, but it may fail. If it
                     // does we'll end up here. In which case, clean up the wait map and let the
                     // client know that this request failed.
-                    tracing::warn!("a stray waiter is still in the wait map for one of our keys");
+                    tracing::warn!("cleaning up a stray waiter from our wait map");
                     let _ = locked_wait_map.remove(key);
                     Err(DeduplicateError::Failed)
                 }
