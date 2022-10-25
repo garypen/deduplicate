@@ -16,6 +16,16 @@ The crate provides a trait `Retriever` which should be implemented for your task
 deduplicate = "0.1"
 ```
 
+## Acknowledgements
+
+This crate build upon the hard work and inspiration of several folks, some of whom I have worked with directly and some from whom I have taken indirect inspiration:
+ - https://github.com/Geal
+ - https://github.com/cecton
+ - https://fasterthanli.me/articles/request-coalescing-in-async-rust
+ - various apollographql router developers
+
+Thanks for the input and good advice. All mistakes/errors are of course mine.
+
 ## License
 
 Apache 2.0 licensed. See LICENSE for details.
