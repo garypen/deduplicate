@@ -1,6 +1,6 @@
 [package]
 name = "deduplicate"
-version = "0.1.0"
+version = "0.1.1"
 description = "deduplicating crate"
 authors = [
   "garypen <garypen@gmail.com>",
