@@ -79,7 +79,7 @@ where
     }
 
     /// Clear the internal cache.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         if let Some(storage) = &self.storage {
             storage.clear();
         }
@@ -152,7 +152,7 @@ where
     }
 
     /// Insert an entry directly into the cache.
-    pub fn insert(&mut self, key: K, value: V) -> Result<(), DeduplicateError> {
+    pub fn insert(&self, key: K, value: V) -> Result<(), DeduplicateError> {
         if let Some(storage) = &self.storage {
             storage.insert(key, value);
             Ok(())
