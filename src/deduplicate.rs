@@ -6,6 +6,7 @@ use std::sync::Weak;
 
 use thiserror::Error;
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
@@ -26,6 +27,7 @@ pub enum DeduplicateError {
 /// Delegated retrieval trait.
 ///
 /// This is the slow or expensive get that we are de-duplicating.
+#[cfg_attr(test, mockall::automock(type Key=usize; type Value=usize;))]
 #[async_trait::async_trait]
 pub trait Retriever: Send + Sync {
     type Key;
@@ -79,7 +81,7 @@ where
     }
 
     /// Clear the internal cache.
-    pub fn clear(&self) {
+    pub fn clear(&mut self) {
         if let Some(storage) = &self.storage {
             storage.clear();
         }
@@ -99,11 +101,25 @@ where
                     // Very important to drop this...
                     drop(strong);
                     drop(locked_wait_map);
-                    receiver
-                        .recv()
-                        .await
-                        .map_err(|_| DeduplicateError::Failed)?
-                        .ok_or(DeduplicateError::NotFound)
+                    // Very important note
+                    // There is a race condition here. It's entirely possible that the sender will
+                    // be closed before we try to recv(). In which case our receiver will get a
+                    // channel closed error. If this happens, then the result will probably
+                    // be in the cache and we can get our result from there.
+                    match receiver.recv().await {
+                        Ok(v) => v.ok_or(DeduplicateError::NotFound),
+                        Err(e) => {
+                            if let Some(storage) = &self.storage {
+                                if matches!(e, RecvError::Closed) {
+                                    return storage.get(key).ok_or(DeduplicateError::NotFound);
+                                }
+                                // Feels like the right thing to do
+                                return Err(DeduplicateError::NotFound);
+                            }
+                            // Potentially confusing...
+                            Err(DeduplicateError::NoCache)
+                        }
+                    }
                 } else {
                     // We try to clean up the wait map from the receiver, but it may fail. If it
                     // does we'll end up here. In which case, clean up the wait map and let the
@@ -152,7 +168,7 @@ where
     }
 
     /// Insert an entry directly into the cache.
-    pub fn insert(&self, key: K, value: V) -> Result<(), DeduplicateError> {
+    pub fn insert(&mut self, key: K, value: V) -> Result<(), DeduplicateError> {
         if let Some(storage) = &self.storage {
             storage.insert(key, value);
             Ok(())
@@ -165,13 +181,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::stream::FuturesUnordered;
+    use futures::StreamExt;
     use rand::Rng;
     use std::time::Instant;
 
-    struct MockRetriever(bool);
+    struct TestRetriever(bool);
 
     #[async_trait::async_trait]
-    impl Retriever for MockRetriever {
+    impl Retriever for TestRetriever {
         type Key = usize;
         type Value = String;
 
@@ -186,15 +204,15 @@ mod tests {
         }
     }
 
-    impl MockRetriever {
+    impl TestRetriever {
         fn new(may_panic: bool) -> Self {
-            MockRetriever(may_panic)
+            TestRetriever(may_panic)
         }
     }
 
     async fn test_harness(deduplicate: Deduplicate<usize, String>) {
         // Let's create our normal retriever and our deduplicating retriever
-        let slower = Arc::new(MockRetriever::new(false));
+        let slower = Arc::new(TestRetriever::new(false));
         let deduplicate = Arc::new(deduplicate);
 
         // We are going to perform the work 5 times to be sure our de-duplicator is working
@@ -254,13 +272,35 @@ mod tests {
         }
     }
 
+    // Test that deduplication works with a default cache using our TestRetriever.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
-        test_harness(Deduplicate::new(Arc::new(MockRetriever::new(true))).await).await
+        test_harness(Deduplicate::new(Arc::new(TestRetriever::new(true))).await).await
     }
 
+    // Test that deduplication works with no cache using our TestRetriever.
     #[tokio::test]
     async fn it_deduplicates_correctly_without_cache() {
-        test_harness(Deduplicate::with_capacity(Arc::new(MockRetriever::new(true)), 0).await).await
+        test_harness(Deduplicate::with_capacity(Arc::new(TestRetriever::new(true)), 0).await).await
+    }
+
+    // Test that we only call our delegate get (Mock) once with a cache size of 10.
+    #[tokio::test]
+    async fn it_should_only_delegate_once_per_key() {
+        let mut mock = MockRetriever::new();
+
+        mock.expect_get().times(1).return_const(1usize);
+
+        let cache: Deduplicate<usize, usize> = Deduplicate::with_capacity(Arc::new(mock), 10).await;
+
+        // Let's trigger 100 concurrent gets of the same value and ensure only
+        // one delegated retrieve is made
+        let mut computations: FuturesUnordered<_> =
+            (0..100).map(|_| async { cache.get(&1).await }).collect();
+
+        // Make sure we got the right value back
+        while let Some(result) = computations.next().await {
+            assert_eq!(result.expect("should be 1"), 1);
+        }
     }
 }
