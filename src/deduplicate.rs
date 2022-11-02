@@ -6,7 +6,6 @@ use std::sync::Weak;
 
 use thiserror::Error;
 use tokio::sync::broadcast;
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
@@ -101,32 +100,23 @@ where
                     // Very important to drop this...
                     drop(strong);
                     drop(locked_wait_map);
-                    // Very important note
-                    // There is a race condition here. It's entirely possible that the sender will
-                    // be closed before we try to recv(). In which case our receiver will get a
-                    // channel closed error. If this happens, then the result will probably
-                    // be in the cache and we can get our result from there.
-                    match receiver.recv().await {
-                        Ok(v) => v.ok_or(DeduplicateError::NotFound),
-                        Err(e) => {
-                            if let Some(storage) = &self.storage {
-                                if matches!(e, RecvError::Closed) {
-                                    return storage.get(key).ok_or(DeduplicateError::NotFound);
-                                }
-                                // Feels like the right thing to do
-                                return Err(DeduplicateError::NotFound);
-                            }
-                            // Potentially confusing...
-                            Err(DeduplicateError::NoCache)
-                        }
-                    }
+                    // Note. It may seem that there is a race condition here, but we have managed
+                    // to upgrade our weak reference and we have subscribed to our broadcast before
+                    // we dropped our lock. Because we only send messages whilst holding the lock,
+                    // we know that it must be safe to recv() here. We still handle errors, but
+                    // don't expect to receive any.
+                    receiver
+                        .recv()
+                        .await
+                        .map_err(|_| DeduplicateError::Failed)?
+                        .ok_or(DeduplicateError::NotFound)
                 } else {
-                    // We try to clean up the wait map from the receiver, but it may fail. If it
-                    // does we'll end up here. In which case, clean up the wait map and let the
-                    // client know that this request failed.
-                    tracing::warn!("cleaning up a stray waiter from our wait map");
-                    let _ = locked_wait_map.remove(key);
-                    Err(DeduplicateError::Failed)
+                    // It should not be possible to reach here because we must have held the lock
+                    // in order to retrieve the weak reference and if we were holding the lock
+                    // any existing sender must still exist since we atomically remove waiters and
+                    // drop the sender under the lock. If we find ourselves here, panic!() and deal
+                    // with the problem in our reasoning.
+                    panic!("cleaning up a stray waiter from our wait map");
                 }
             }
             None => {
@@ -146,9 +136,13 @@ where
                 }
                 let retriever = self.retriever.clone();
                 let k = key.clone();
+                let wait_map = self.wait_map.clone();
                 tokio::spawn(async move {
                     let fut = retriever.get(&k);
                     let value = fut.await;
+                    // Clean up the wait map before we send the value
+                    let mut locked_wait_map = wait_map.lock().await;
+                    let _ = locked_wait_map.remove(&k);
                     let _ = sender.send(value);
                 });
                 // We only want one receiver to clean up the wait map, so this is the right place
