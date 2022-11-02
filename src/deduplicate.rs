@@ -111,12 +111,14 @@ where
                         .map_err(|_| DeduplicateError::Failed)?
                         .ok_or(DeduplicateError::NotFound)
                 } else {
-                    // It should not be possible to reach here because we must have held the lock
-                    // in order to retrieve the weak reference and if we were holding the lock
-                    // any existing sender must still exist since we atomically remove waiters and
-                    // drop the sender under the lock. If we find ourselves here, panic!() and deal
-                    // with the problem in our reasoning.
-                    panic!("cleaning up a stray waiter from our wait map");
+                    // In the normal run of things, we won't reach this code. However, if a
+                    // retriever panics and fails to complete or a task is cancelled at an .await
+                    // then we may find ourselves here. If so, we may have lost our sender
+                    // and there may still be an entry in the wait_map which our receiver has not
+                    // yet removed. In which case, we don't have a value and we'll never get a
+                    // value, so let's just remove the wait_map entry and return Failed.
+                    let _ = locked_wait_map.remove(key);
+                    Err(DeduplicateError::Failed)
                 }
             }
             None => {
