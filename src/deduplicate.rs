@@ -4,9 +4,12 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::sync::Weak;
 
+use std::future::Future;
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
+
+// pub type BoxFut<'a, O> = Pin<Box<dyn Future<Output = O> + Send + 'a>>;
 
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
 
@@ -39,44 +42,49 @@ pub trait Retriever: Send + Sync {
 ///
 /// When trying to avoid multiple slow or expensive retrievals, use this.
 #[derive(Clone)]
-pub struct Deduplicate<K: Clone + Send + Eq + Hash, V: Clone + Send> {
-    retriever: Arc<dyn Retriever<Key = K, Value = V>>,
+pub struct Deduplicate<F, G, K, V>
+where
+    F: Future<Output = Option<V>>,
+    G: Fn(K) -> F,
+    K: Clone + Send + Eq + Hash,
+    V: Clone + Send,
+{
+    getter: Box<G>,
     storage: Option<Cache<K, V>>,
     wait_map: WaitMap<K, V>,
 }
 
-impl<K, V> Deduplicate<K, V>
+impl<F, G, K, V> Deduplicate<F, G, K, V>
 where
+    F: Future<Output = Option<V>> + Send + 'static,
+    G: Fn(K) -> F,
     K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
     /// Create a new deduplicator for the provided retriever with default cache capacity: 512.
-    pub async fn new(retriever: Arc<dyn Retriever<Key = K, Value = V>>) -> Self {
-        Self::with_capacity(retriever, DEFAULT_CACHE_CAPACITY).await
+    pub fn new(getter: Box<G>) -> Self {
+        Self::with_capacity(getter, DEFAULT_CACHE_CAPACITY)
     }
 
     /// Create a new deduplicator for the provided retriever with specified cache capacity.
     /// Note: If capacity is 0, then caching is disabled.
-    pub async fn with_capacity(
-        retriever: Arc<dyn Retriever<Key = K, Value = V>>,
-        capacity: usize,
-    ) -> Self {
+    pub fn with_capacity(getter: Box<G>, capacity: usize) -> Self {
         let storage = if capacity > 0 {
             Some(Cache::new(capacity))
         } else {
             None
         };
         Self {
-            retriever,
+            getter,
             wait_map: Arc::new(Mutex::new(HashMap::new())),
             storage,
         }
     }
 
     /// Update the retriever to use for future gets. This will also clear the internal cache.
-    pub fn set_retriever(&mut self, retriever: Arc<dyn Retriever<Key = K, Value = V>>) {
+    pub fn set_getter(&mut self, getter: Box<G>) {
         self.clear();
-        self.retriever = retriever;
+        self.getter = getter;
     }
 
     /// Clear the internal cache.
@@ -136,11 +144,10 @@ where
                         return Ok(value);
                     }
                 }
-                let retriever = self.retriever.clone();
+                let fut = (self.getter)(key.clone());
                 let k = key.clone();
                 let wait_map = self.wait_map.clone();
                 tokio::spawn(async move {
-                    let fut = retriever.get(&k);
                     let value = fut.await;
                     // Clean up the wait map before we send the value
                     let mut locked_wait_map = wait_map.lock().await;
@@ -206,7 +213,22 @@ mod tests {
         }
     }
 
-    async fn test_harness(deduplicate: Deduplicate<usize, String>) {
+    async fn get(_key: usize) -> Option<String> {
+        let num = rand::thread_rng().gen_range(1000..2000);
+        tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+
+        if num % 2 == 0 {
+            panic!("BAD NUMBER");
+        }
+        Some("test".to_string())
+    }
+
+    // async fn test_harness(deduplicate: Deduplicate<usize, String>) {
+    async fn test_harness<F, G>(deduplicate: Deduplicate<F, G, usize, String>)
+    where
+        F: Future<Output = Option<String>> + Send + 'static,
+        G: Fn(usize) -> F,
+    {
         // Let's create our normal retriever and our deduplicating retriever
         let slower = Arc::new(TestRetriever::new(false));
         let deduplicate = Arc::new(deduplicate);
@@ -271,15 +293,16 @@ mod tests {
     // Test that deduplication works with a default cache using our TestRetriever.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
-        test_harness(Deduplicate::new(Arc::new(TestRetriever::new(true))).await).await
+        test_harness(Deduplicate::new(Box::new(get))).await
     }
 
     // Test that deduplication works with no cache using our TestRetriever.
     #[tokio::test]
     async fn it_deduplicates_correctly_without_cache() {
-        test_harness(Deduplicate::with_capacity(Arc::new(TestRetriever::new(true)), 0).await).await
+        test_harness(Deduplicate::with_capacity(Box::new(get), 0)).await
     }
 
+    /*
     // Test that we only call our delegate get (Mock) once with a cache size of 10.
     #[tokio::test]
     async fn it_should_only_delegate_once_per_key() {
@@ -299,4 +322,5 @@ mod tests {
             assert_eq!(result.expect("should be 1"), 1);
         }
     }
+    */
 }

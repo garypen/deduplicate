@@ -23,9 +23,18 @@ impl Retriever for ARetriever {
     }
 }
 
+async fn get(_key: usize) -> Option<String> {
+    let num = rand::thread_rng().gen_range(1000..2000);
+    tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+    if num % 2 == 0 {
+        panic!("BAD NUMBER");
+    }
+    Some("test".to_string())
+}
+
 #[tokio::main]
 async fn main() {
-    let deduplicate = Arc::new(Deduplicate::new(Arc::new(ARetriever)).await);
+    let deduplicate = Arc::new(Deduplicate::new(Box::new(get)));
 
     for _i in 0..5 {
         let mut hdls = vec![];
