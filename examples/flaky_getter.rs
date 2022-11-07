@@ -2,26 +2,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use deduplicate::Deduplicate;
-use deduplicate::Retriever;
 
 use rand::Rng;
-
-struct ARetriever;
-
-#[async_trait::async_trait]
-impl Retriever for ARetriever {
-    type Key = usize;
-    type Value = String;
-
-    async fn get(&self, _key: &Self::Key) -> Option<Self::Value> {
-        let num = rand::thread_rng().gen_range(1000..2000);
-        tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
-        if num % 2 == 0 {
-            panic!("BAD NUMBER");
-        }
-        Some("test".to_string())
-    }
-}
 
 async fn get(_key: usize) -> Option<String> {
     let num = rand::thread_rng().gen_range(1000..2000);

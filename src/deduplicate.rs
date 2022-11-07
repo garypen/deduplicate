@@ -9,8 +9,6 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
-// pub type BoxFut<'a, O> = Pin<Box<dyn Future<Output = O> + Send + 'a>>;
-
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
 
 const DEFAULT_CACHE_CAPACITY: usize = 512;
@@ -18,29 +16,15 @@ const DEFAULT_CACHE_CAPACITY: usize = 512;
 /// Deduplication errors
 #[derive(Debug, Error)]
 pub enum DeduplicateError {
-    #[error("Delegated retrieve failed")]
+    #[error("Delegated get failed")]
     Failed,
     #[error("Cache not enabled")]
     NoCache,
-    #[error("Delegated retrieve not found")]
-    NotFound,
-}
-
-/// Delegated retrieval trait.
-///
-/// This is the slow or expensive get that we are de-duplicating.
-#[cfg_attr(test, mockall::automock(type Key=usize; type Value=usize;))]
-#[async_trait::async_trait]
-pub trait Retriever: Send + Sync {
-    type Key;
-    type Value;
-
-    async fn get(&self, key: &Self::Key) -> Option<Self::Value>;
 }
 
 /// Query de-duplication with optional cache.
 ///
-/// When trying to avoid multiple slow or expensive retrievals, use this.
+/// When trying to avoid multiple slow or expensive gets, use this.
 #[derive(Clone)]
 pub struct Deduplicate<F, G, K, V>
 where
@@ -61,12 +45,12 @@ where
     K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
-    /// Create a new deduplicator for the provided retriever with default cache capacity: 512.
+    /// Create a new deduplicator for the provided getter with default cache capacity: 512.
     pub fn new(getter: Box<G>) -> Self {
         Self::with_capacity(getter, DEFAULT_CACHE_CAPACITY)
     }
 
-    /// Create a new deduplicator for the provided retriever with specified cache capacity.
+    /// Create a new deduplicator for the provided getter with specified cache capacity.
     /// Note: If capacity is 0, then caching is disabled.
     pub fn with_capacity(getter: Box<G>, capacity: usize) -> Self {
         let storage = if capacity > 0 {
@@ -81,7 +65,7 @@ where
         }
     }
 
-    /// Update the retriever to use for future gets. This will also clear the internal cache.
+    /// Update the getter to use for future gets. This will also clear the internal cache.
     pub fn set_getter(&mut self, getter: Box<G>) {
         self.clear();
         self.getter = getter;
@@ -94,12 +78,12 @@ where
         }
     }
 
-    /// Use the retriever to get a value. If the key cannot be retrieved, then a
-    /// [`DeduplicateError::NotFound`] error is returned. Many concurrent accessors can
-    /// attempt to get the same key, but the retriever will only be used once. It is
-    /// possible that the retriever will panic. In which case any concurrent accessors
-    /// will get the error: [`DeduplicateError::Failed`]
-    pub async fn get(&self, key: &K) -> Result<V, DeduplicateError> {
+    /// Use the getter to get a value.
+    ///
+    /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
+    /// be called once. If the getter panics or is cancelled, any concurrent accessors will get the
+    /// error: [`DeduplicateError::Failed`]
+    pub async fn get(&self, key: &K) -> Result<Option<V>, DeduplicateError> {
         let mut locked_wait_map = self.wait_map.lock().await;
         match locked_wait_map.get(key) {
             Some(weak) => {
@@ -113,14 +97,10 @@ where
                     // we dropped our lock. Because we only send messages whilst holding the lock,
                     // we know that it must be safe to recv() here. We still handle errors, but
                     // don't expect to receive any.
-                    receiver
-                        .recv()
-                        .await
-                        .map_err(|_| DeduplicateError::Failed)?
-                        .ok_or(DeduplicateError::NotFound)
+                    receiver.recv().await.map_err(|_| DeduplicateError::Failed)
                 } else {
                     // In the normal run of things, we won't reach this code. However, if a
-                    // retriever panics and fails to complete or a task is cancelled at an .await
+                    // getter panics and fails to complete or a task is cancelled at an .await
                     // then we may find ourselves here. If so, we may have lost our sender
                     // and there may still be an entry in the wait_map which our receiver has not
                     // yet removed. In which case, we don't have a value and we'll never get a
@@ -141,7 +121,7 @@ where
                         let _ = locked_wait_map.remove(key);
                         let _ = sender.send(Some(value.clone()));
 
-                        return Ok(value);
+                        return Ok(Some(value));
                     }
                 }
                 let fut = (self.getter)(key.clone());
@@ -159,13 +139,13 @@ where
                 let result = receiver.recv().await.map_err(|_| DeduplicateError::Failed);
                 let mut locked_wait_map = self.wait_map.lock().await;
                 let _ = locked_wait_map.remove(key);
-                let res = result?.ok_or(DeduplicateError::NotFound);
+                let res = result?;
                 if let Some(storage) = &self.storage {
-                    if let Ok(v) = &res {
+                    if let Some(v) = &res {
                         storage.insert(key.clone(), v.clone());
                     }
                 }
-                res
+                Ok(res)
             }
         }
     }
@@ -184,34 +164,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::stream::FuturesUnordered;
-    use futures::StreamExt;
     use rand::Rng;
     use std::time::Instant;
-
-    struct TestRetriever(bool);
-
-    #[async_trait::async_trait]
-    impl Retriever for TestRetriever {
-        type Key = usize;
-        type Value = String;
-
-        async fn get(&self, _key: &Self::Key) -> Option<Self::Value> {
-            let num = rand::thread_rng().gen_range(1000..2000);
-            tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
-
-            if self.0 && num % 2 == 0 {
-                panic!("BAD NUMBER");
-            }
-            Some("test".to_string())
-        }
-    }
-
-    impl TestRetriever {
-        fn new(may_panic: bool) -> Self {
-            TestRetriever(may_panic)
-        }
-    }
 
     async fn get(_key: usize) -> Option<String> {
         let num = rand::thread_rng().gen_range(1000..2000);
@@ -223,14 +177,19 @@ mod tests {
         Some("test".to_string())
     }
 
-    // async fn test_harness(deduplicate: Deduplicate<usize, String>) {
     async fn test_harness<F, G>(deduplicate: Deduplicate<F, G, usize, String>)
     where
         F: Future<Output = Option<String>> + Send + 'static,
         G: Fn(usize) -> F,
     {
-        // Let's create our normal retriever and our deduplicating retriever
-        let slower = Arc::new(TestRetriever::new(false));
+        // Let's create our normal getter and our deduplicating getter
+        // (The same functionality as `get`, but without panicking.)
+        let no_panic_get = |_x: usize| async {
+            let num = rand::thread_rng().gen_range(1000..2000);
+            tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+
+            Some("test".to_string())
+        };
         let deduplicate = Arc::new(deduplicate);
 
         // We are going to perform the work 5 times to be sure our de-duplicator is working
@@ -241,13 +200,12 @@ mod tests {
             // Create our lists of dedup and non-dedup futures
             for _i in 0..100 {
                 let my_deduplicate = deduplicate.clone();
-                let my_slower = slower.clone();
                 dedup_hdls.push(async move {
                     let is_ok = my_deduplicate.get(&5).await.is_ok();
                     (Instant::now(), is_ok)
                 });
                 slower_hdls.push(async move {
-                    let is_ok = my_slower.get(&5).await.is_some();
+                    let is_ok = (no_panic_get)(5).await.is_some();
                     (Instant::now(), is_ok)
                 });
             }
@@ -290,37 +248,15 @@ mod tests {
         }
     }
 
-    // Test that deduplication works with a default cache using our TestRetriever.
+    // Test that deduplication works with a default cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
         test_harness(Deduplicate::new(Box::new(get))).await
     }
 
-    // Test that deduplication works with no cache using our TestRetriever.
+    // Test that deduplication works with no cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_without_cache() {
         test_harness(Deduplicate::with_capacity(Box::new(get), 0)).await
     }
-
-    /*
-    // Test that we only call our delegate get (Mock) once with a cache size of 10.
-    #[tokio::test]
-    async fn it_should_only_delegate_once_per_key() {
-        let mut mock = MockRetriever::new();
-
-        mock.expect_get().times(1).return_const(1usize);
-
-        let cache: Deduplicate<usize, usize> = Deduplicate::with_capacity(Arc::new(mock), 10).await;
-
-        // Let's trigger 100 concurrent gets of the same value and ensure only
-        // one delegated retrieve is made
-        let mut computations: FuturesUnordered<_> =
-            (0..100).map(|_| async { cache.get(&1).await }).collect();
-
-        // Make sure we got the right value back
-        while let Some(result) = computations.next().await {
-            assert_eq!(result.expect("should be 1"), 1);
-        }
-    }
-    */
 }
