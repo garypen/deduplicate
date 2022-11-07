@@ -9,6 +9,9 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
+pub trait KeyTrait: Clone + Send + Eq + Hash {}
+pub trait ValueTrait: Clone + Send {}
+
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
 
 const DEFAULT_CACHE_CAPACITY: usize = 512;
@@ -29,11 +32,11 @@ pub enum DeduplicateError {
 pub struct Deduplicate<F, G, K, V>
 where
     F: Future<Output = Option<V>>,
-    G: Fn(K) -> F,
+    G: Fn(K) -> F + Clone,
     K: Clone + Send + Eq + Hash,
     V: Clone + Send,
 {
-    getter: Box<G>,
+    delegate: Box<G>,
     storage: Option<Cache<K, V>>,
     wait_map: WaitMap<K, V>,
 }
@@ -41,34 +44,34 @@ where
 impl<F, G, K, V> Deduplicate<F, G, K, V>
 where
     F: Future<Output = Option<V>> + Send + 'static,
-    G: Fn(K) -> F,
+    G: Fn(K) -> F + Clone,
     K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
-    /// Create a new deduplicator for the provided getter with default cache capacity: 512.
-    pub fn new(getter: Box<G>) -> Self {
-        Self::with_capacity(getter, DEFAULT_CACHE_CAPACITY)
+    /// Create a new deduplicator for the provided delegate with default cache capacity: 512.
+    pub fn new(delegate: Box<G>) -> Self {
+        Self::with_capacity(delegate, DEFAULT_CACHE_CAPACITY)
     }
 
-    /// Create a new deduplicator for the provided getter with specified cache capacity.
+    /// Create a new deduplicator for the provided delegate with specified cache capacity.
     /// Note: If capacity is 0, then caching is disabled.
-    pub fn with_capacity(getter: Box<G>, capacity: usize) -> Self {
+    pub fn with_capacity(delegate: Box<G>, capacity: usize) -> Self {
         let storage = if capacity > 0 {
             Some(Cache::new(capacity))
         } else {
             None
         };
         Self {
-            getter,
+            delegate,
             wait_map: Arc::new(Mutex::new(HashMap::new())),
             storage,
         }
     }
 
-    /// Update the getter to use for future gets. This will also clear the internal cache.
-    pub fn set_getter(&mut self, getter: Box<G>) {
+    /// Update the delegate to use for future gets. This will also clear the internal cache.
+    pub fn set_delegate(&mut self, delegate: Box<G>) {
         self.clear();
-        self.getter = getter;
+        self.delegate = delegate;
     }
 
     /// Clear the internal cache.
@@ -78,10 +81,10 @@ where
         }
     }
 
-    /// Use the getter to get a value.
+    /// Use the delegate to get a value.
     ///
     /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
-    /// be called once. If the getter panics or is cancelled, any concurrent accessors will get the
+    /// be called once. If the delegate panics or is cancelled, any concurrent accessors will get the
     /// error: [`DeduplicateError::Failed`]
     pub async fn get(&self, key: &K) -> Result<Option<V>, DeduplicateError> {
         let mut locked_wait_map = self.wait_map.lock().await;
@@ -100,7 +103,7 @@ where
                     receiver.recv().await.map_err(|_| DeduplicateError::Failed)
                 } else {
                     // In the normal run of things, we won't reach this code. However, if a
-                    // getter panics and fails to complete or a task is cancelled at an .await
+                    // delegate panics and fails to complete or a task is cancelled at an .await
                     // then we may find ourselves here. If so, we may have lost our sender
                     // and there may still be an entry in the wait_map which our receiver has not
                     // yet removed. In which case, we don't have a value and we'll never get a
@@ -124,7 +127,7 @@ where
                         return Ok(Some(value));
                     }
                 }
-                let fut = (self.getter)(key.clone());
+                let fut = (self.delegate)(key.clone());
                 let k = key.clone();
                 let wait_map = self.wait_map.clone();
                 tokio::spawn(async move {
@@ -180,9 +183,9 @@ mod tests {
     async fn test_harness<F, G>(deduplicate: Deduplicate<F, G, usize, String>)
     where
         F: Future<Output = Option<String>> + Send + 'static,
-        G: Fn(usize) -> F,
+        G: Fn(usize) -> F + Clone,
     {
-        // Let's create our normal getter and our deduplicating getter
+        // Let's create our normal getter and use our deduplicating delegate.
         // (The same functionality as `get`, but without panicking.)
         let no_panic_get = |_x: usize| async {
             let num = rand::thread_rng().gen_range(1000..2000);
@@ -251,7 +254,14 @@ mod tests {
     // Test that deduplication works with a default cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
-        test_harness(Deduplicate::new(Box::new(get))).await
+        let no_panic_get = |_x: usize| async {
+            let num = rand::thread_rng().gen_range(1000..2000);
+            tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+
+            Some("test".to_string())
+        };
+        // test_harness(Deduplicate::new(Box::new(get))).await
+        test_harness(Deduplicate::new(Box::new(no_panic_get))).await
     }
 
     // Test that deduplication works with no cache.
