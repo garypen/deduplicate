@@ -18,28 +18,37 @@
 //!
 //! Example 1
 //! ```
+//! use std::future::Future;
+//! use std::pin::Pin;
 //! use deduplicate::Deduplicate;
 //! use deduplicate::DeduplicateError;
 //!
 //! use rand::Rng;
 //!
 //!
-//! async fn get(key: usize) -> Option<String> {
-//!     let num = rand::thread_rng().gen_range(1000..2000);
-//!     tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+//! fn get(key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>> {
+//!     let fut = async move {
+//!         let num = rand::thread_rng().gen_range(1000..2000);
+//!         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 //!
-//!     Some(format!("key: {}, duration: {}", key, num))
+//!         Some(format!("key: {}, duration: {}", key, num))
+//!     };
+//!     Box::pin(fut)
 //! }
 //!
-//! let closure = |key: usize| async move {
-//!     let num = rand::thread_rng().gen_range(1000..2000);
-//!     tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 //!
-//!     Some(format!("key: {}, duration: {}", key, num))
+//! let closure = |key: usize| {
+//!     let fut = async move {
+//!         let num = rand::thread_rng().gen_range(1000..2000);
+//!         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+//!
+//!         Some(format!("key: {}, duration: {}", key, num))
+//!     };
+//!     Box::pin(fut) as Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>>
 //! };
 //!
-//! let deduplicate_with_fn = Deduplicate::new(Box::new(get));
-//! let deduplicate_with_closure = Deduplicate::new(Box::new(closure));
+//! let deduplicate_with_fn = Deduplicate::new(get);
+//! let deduplicate_with_closure = Deduplicate::new(closure);
 //! ```
 //!
 //! Now we can invoke get concurrently on our deduplicator and be sure that the expensive retrieve

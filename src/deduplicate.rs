@@ -1,16 +1,14 @@
 use crate::cache::Cache;
 use std::collections::HashMap;
+use std::future::Future;
 use std::hash::Hash;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Weak;
 
-use std::future::Future;
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
-
-pub trait KeyTrait: Clone + Send + Eq + Hash {}
-pub trait ValueTrait: Clone + Send {}
 
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
 
@@ -29,33 +27,31 @@ pub enum DeduplicateError {
 ///
 /// When trying to avoid multiple slow or expensive gets, use this.
 #[derive(Clone)]
-pub struct Deduplicate<F, G, K, V>
+pub struct Deduplicate<G, K, V>
 where
-    F: Future<Output = Option<V>>,
-    G: Fn(K) -> F + Clone,
+    G: Fn(K) -> Pin<Box<dyn Future<Output = Option<V>> + Send>> + Clone,
     K: Clone + Send + Eq + Hash,
     V: Clone + Send,
 {
-    delegate: Box<G>,
+    delegate: G,
     storage: Option<Cache<K, V>>,
     wait_map: WaitMap<K, V>,
 }
 
-impl<F, G, K, V> Deduplicate<F, G, K, V>
+impl<G, K, V> Deduplicate<G, K, V>
 where
-    F: Future<Output = Option<V>> + Send + 'static,
-    G: Fn(K) -> F + Clone,
+    G: Fn(K) -> Pin<Box<dyn Future<Output = Option<V>> + Send>> + Clone,
     K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
     /// Create a new deduplicator for the provided delegate with default cache capacity: 512.
-    pub fn new(delegate: Box<G>) -> Self {
+    pub fn new(delegate: G) -> Self {
         Self::with_capacity(delegate, DEFAULT_CACHE_CAPACITY)
     }
 
     /// Create a new deduplicator for the provided delegate with specified cache capacity.
     /// Note: If capacity is 0, then caching is disabled.
-    pub fn with_capacity(delegate: Box<G>, capacity: usize) -> Self {
+    pub fn with_capacity(delegate: G, capacity: usize) -> Self {
         let storage = if capacity > 0 {
             Some(Cache::new(capacity))
         } else {
@@ -69,7 +65,7 @@ where
     }
 
     /// Update the delegate to use for future gets. This will also clear the internal cache.
-    pub fn set_delegate(&mut self, delegate: Box<G>) {
+    pub fn set_delegate(&mut self, delegate: G) {
         self.clear();
         self.delegate = delegate;
     }
@@ -170,20 +166,22 @@ mod tests {
     use rand::Rng;
     use std::time::Instant;
 
-    async fn get(_key: usize) -> Option<String> {
-        let num = rand::thread_rng().gen_range(1000..2000);
-        tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+    fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>> {
+        let fut = async {
+            let num = rand::thread_rng().gen_range(1000..2000);
+            tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
-        if num % 2 == 0 {
-            panic!("BAD NUMBER");
-        }
-        Some("test".to_string())
+            if num % 2 == 0 {
+                panic!("BAD NUMBER");
+            }
+            Some("test".to_string())
+        };
+        Box::pin(fut)
     }
 
-    async fn test_harness<F, G>(deduplicate: Deduplicate<F, G, usize, String>)
+    async fn test_harness<G>(deduplicate: Deduplicate<G, usize, String>)
     where
-        F: Future<Output = Option<String>> + Send + 'static,
-        G: Fn(usize) -> F + Clone,
+        G: Fn(usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Clone,
     {
         // Let's create our normal getter and use our deduplicating delegate.
         // (The same functionality as `get`, but without panicking.)
@@ -254,19 +252,21 @@ mod tests {
     // Test that deduplication works with a default cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
-        let no_panic_get = |_x: usize| async {
-            let num = rand::thread_rng().gen_range(1000..2000);
-            tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
+        let no_panic_get = |_x: usize| {
+            let fut = async {
+                let num = rand::thread_rng().gen_range(1000..2000);
+                tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
-            Some("test".to_string())
+                Some("test".to_string())
+            };
+            Box::pin(fut) as Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>>
         };
-        // test_harness(Deduplicate::new(Box::new(get))).await
-        test_harness(Deduplicate::new(Box::new(no_panic_get))).await
+        test_harness(Deduplicate::new(no_panic_get)).await
     }
 
     // Test that deduplication works with no cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_without_cache() {
-        test_harness(Deduplicate::with_capacity(Box::new(get), 0)).await
+        test_harness(Deduplicate::with_capacity(get, 0)).await
     }
 }
