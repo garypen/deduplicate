@@ -26,7 +26,7 @@
 //! use rand::Rng;
 //!
 //!
-//! fn get(key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>> {
+//! fn get(key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
 //!     let fut = async move {
 //!         let num = rand::thread_rng().gen_range(1000..2000);
 //!         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
@@ -37,14 +37,14 @@
 //! }
 //!
 //!
-//! let closure = |key: usize| {
+//! let closure = |key: usize| -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
 //!     let fut = async move {
 //!         let num = rand::thread_rng().gen_range(1000..2000);
 //!         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 //!
 //!         Some(format!("key: {}, duration: {}", key, num))
 //!     };
-//!     Box::pin(fut) as Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>>
+//!     Box::pin(fut)
 //! };
 //!
 //! let deduplicate_with_fn = Deduplicate::new(get);

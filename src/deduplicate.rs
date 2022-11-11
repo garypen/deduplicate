@@ -166,7 +166,7 @@ mod tests {
     use rand::Rng;
     use std::time::Instant;
 
-    fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>> {
+    fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
         let fut = async {
             let num = rand::thread_rng().gen_range(1000..2000);
             tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
@@ -252,14 +252,14 @@ mod tests {
     // Test that deduplication works with a default cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
-        let no_panic_get = |_x: usize| {
+        let no_panic_get = |_x: usize| -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
             let fut = async {
                 let num = rand::thread_rng().gen_range(1000..2000);
                 tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
                 Some("test".to_string())
             };
-            Box::pin(fut) as Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>>
+            Box::pin(fut)
         };
         test_harness(Deduplicate::new(no_panic_get)).await
     }

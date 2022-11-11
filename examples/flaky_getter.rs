@@ -7,7 +7,7 @@ use deduplicate::Deduplicate;
 
 use rand::Rng;
 
-fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>> {
+fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
     let fut = async {
         let num = rand::thread_rng().gen_range(1000..2000);
         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
