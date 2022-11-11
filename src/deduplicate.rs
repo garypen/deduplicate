@@ -10,15 +10,20 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
+/// Boxed Future yielding an optional value.
+pub type DeduplicateFuture<V> = Pin<Box<dyn Future<Output = Option<V>> + Send>>;
+
 type WaitMap<K, V> = Arc<Mutex<HashMap<K, Weak<broadcast::Sender<Option<V>>>>>>;
 
 const DEFAULT_CACHE_CAPACITY: usize = 512;
 
-/// Deduplication errors
+/// Deduplication errors.
 #[derive(Debug, Error)]
 pub enum DeduplicateError {
+    /// The delegated get failed.
     #[error("Delegated get failed")]
     Failed,
+    /// There is no cache in this instance.
     #[error("Cache not enabled")]
     NoCache,
 }
@@ -29,7 +34,7 @@ pub enum DeduplicateError {
 #[derive(Clone)]
 pub struct Deduplicate<G, K, V>
 where
-    G: Fn(K) -> Pin<Box<dyn Future<Output = Option<V>> + Send>> + Clone,
+    G: Fn(K) -> DeduplicateFuture<V> + Clone,
     K: Clone + Send + Eq + Hash,
     V: Clone + Send,
 {
@@ -40,7 +45,7 @@ where
 
 impl<G, K, V> Deduplicate<G, K, V>
 where
-    G: Fn(K) -> Pin<Box<dyn Future<Output = Option<V>> + Send>> + Clone,
+    G: Fn(K) -> DeduplicateFuture<V> + Clone,
     K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
@@ -81,7 +86,7 @@ where
     ///
     /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
     /// be called once. If the delegate panics or is cancelled, any concurrent accessors will get the
-    /// error: [`DeduplicateError::Failed`]
+    /// error: [`DeduplicateError::Failed`].
     pub async fn get(&self, key: &K) -> Result<Option<V>, DeduplicateError> {
         let mut locked_wait_map = self.wait_map.lock().await;
         match locked_wait_map.get(key) {
@@ -149,7 +154,8 @@ where
         }
     }
 
-    /// Insert an entry directly into the cache.
+    /// Insert an entry directly into the cache. If there is no cache , this
+    /// will fail with [`DeduplicateError::NoCache`].
     pub fn insert(&mut self, key: K, value: V) -> Result<(), DeduplicateError> {
         if let Some(storage) = &self.storage {
             storage.insert(key, value);
@@ -166,7 +172,7 @@ mod tests {
     use rand::Rng;
     use std::time::Instant;
 
-    fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
+    fn get(_key: usize) -> DeduplicateFuture<String> {
         let fut = async {
             let num = rand::thread_rng().gen_range(1000..2000);
             tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
@@ -181,7 +187,7 @@ mod tests {
 
     async fn test_harness<G>(deduplicate: Deduplicate<G, usize, String>)
     where
-        G: Fn(usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Clone,
+        G: Fn(usize) -> DeduplicateFuture<String> + Clone,
     {
         // Let's create our normal getter and use our deduplicating delegate.
         // (The same functionality as `get`, but without panicking.)
@@ -252,7 +258,7 @@ mod tests {
     // Test that deduplication works with a default cache.
     #[tokio::test]
     async fn it_deduplicates_correctly_with_cache() {
-        let no_panic_get = |_x: usize| -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
+        let no_panic_get = |_x: usize| -> DeduplicateFuture<String> {
             let fut = async {
                 let num = rand::thread_rng().gen_range(1000..2000);
                 tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;

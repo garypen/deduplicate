@@ -1,13 +1,12 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
 use deduplicate::Deduplicate;
+use deduplicate::DeduplicateFuture;
 
 use rand::Rng;
 
-fn get(_key: usize) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> {
+fn get(_key: usize) -> DeduplicateFuture<String> {
     let fut = async {
         let num = rand::thread_rng().gen_range(1000..2000);
         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
@@ -48,6 +47,6 @@ async fn main() {
                 .fold(0, |acc, x| if x.1 { acc + 1 } else { acc })
         );
         println!("result: {:?}", result);
-        println!("elapsed: {:?}", Instant::now() - start);
+        println!("elapsed: {:?}\n", Instant::now() - start);
     }
 }
