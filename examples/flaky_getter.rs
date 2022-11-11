@@ -6,6 +6,9 @@ use deduplicate::DeduplicateFuture;
 
 use rand::Rng;
 
+/// If our delegated getter panics, all our concurrent gets will
+/// fail. Let's cause that to happen sometimes by panicking on even
+/// numbers.
 fn get(_key: usize) -> DeduplicateFuture<String> {
     let fut = async {
         let num = rand::thread_rng().gen_range(1000..2000);
@@ -19,6 +22,17 @@ fn get(_key: usize) -> DeduplicateFuture<String> {
     Box::pin(fut)
 }
 
+/// Create our deduplicate and then loop around 5 times creating 100
+/// jobs which all call our delegated get function.
+/// We print out data about each iteration where we see how many
+/// succeed, the range of times between each invocation, the set
+/// of results and how long the iteration took.
+/// The results of running this will vary depending on whether or not
+/// our random number generator provides us with an even number.
+/// As long as we get even numbers, all of our gets will fail and
+/// the delegated get will continue to be invoked. As soon as we
+/// get a delegated call that succeeds, all of our remaing loops
+/// will succeed since they'll get the value from the cache.
 #[tokio::main]
 async fn main() {
     let deduplicate = Arc::new(Deduplicate::new(get));
@@ -29,7 +43,7 @@ async fn main() {
         for _i in 0..100 {
             let my_deduplicate = deduplicate.clone();
             hdls.push(async move {
-                let is_ok = my_deduplicate.get(&5).await.is_ok();
+                let is_ok = my_deduplicate.get(5).await.is_ok();
                 (Instant::now(), is_ok)
             });
         }

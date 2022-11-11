@@ -87,9 +87,9 @@ where
     /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
     /// be called once. If the delegate panics or is cancelled, any concurrent accessors will get the
     /// error: [`DeduplicateError::Failed`].
-    pub async fn get(&self, key: &K) -> Result<Option<V>, DeduplicateError> {
+    pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
         let mut locked_wait_map = self.wait_map.lock().await;
-        match locked_wait_map.get(key) {
+        match locked_wait_map.get(&key) {
             Some(weak) => {
                 if let Some(strong) = weak.upgrade() {
                     let mut receiver = strong.subscribe();
@@ -109,7 +109,7 @@ where
                     // and there may still be an entry in the wait_map which our receiver has not
                     // yet removed. In which case, we don't have a value and we'll never get a
                     // value, so let's just remove the wait_map entry and return Failed.
-                    let _ = locked_wait_map.remove(key);
+                    let _ = locked_wait_map.remove(&key);
                     Err(DeduplicateError::Failed)
                 }
             }
@@ -120,9 +120,9 @@ where
 
                 drop(locked_wait_map);
                 if let Some(storage) = &self.storage {
-                    if let Some(value) = storage.get(key) {
+                    if let Some(value) = storage.get(&key) {
                         let mut locked_wait_map = self.wait_map.lock().await;
-                        let _ = locked_wait_map.remove(key);
+                        let _ = locked_wait_map.remove(&key);
                         let _ = sender.send(Some(value.clone()));
 
                         return Ok(Some(value));
@@ -142,11 +142,11 @@ where
                 // to do it.
                 let result = receiver.recv().await.map_err(|_| DeduplicateError::Failed);
                 let mut locked_wait_map = self.wait_map.lock().await;
-                let _ = locked_wait_map.remove(key);
+                let _ = locked_wait_map.remove(&key);
                 let res = result?;
                 if let Some(storage) = &self.storage {
                     if let Some(v) = &res {
-                        storage.insert(key.clone(), v.clone());
+                        storage.insert(key, v.clone());
                     }
                 }
                 Ok(res)
@@ -208,7 +208,7 @@ mod tests {
             for _i in 0..100 {
                 let my_deduplicate = deduplicate.clone();
                 dedup_hdls.push(async move {
-                    let is_ok = my_deduplicate.get(&5).await.is_ok();
+                    let is_ok = my_deduplicate.get(5).await.is_ok();
                     (Instant::now(), is_ok)
                 });
                 slower_hdls.push(async move {

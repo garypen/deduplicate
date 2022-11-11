@@ -23,5 +23,5 @@ tracing = "0.1.34"
 
 [dev-dependencies]
 futures = "0.3.25"
-mockall = "0.11.3"
 rand = "0.8.5"
+tokio-test = "0.4.2"

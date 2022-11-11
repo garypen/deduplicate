@@ -25,11 +25,11 @@
 //! use rand::Rng;
 //!
 //!
-//! /// This is our slow accessor function. Note that we must take a single
-//! /// key argument and return a [`DeduplicateFuture`] with our value.
-//! /// All of our specific logic is enclosed within an async block. We
-//! /// are using move to move the key into the block.  Finally, we pin
-//! /// the block and return it.
+//! // This is our slow accessor function. Note that we must take a single
+//! // key argument and return a [`DeduplicateFuture`] with our value.
+//! // All of our specific logic is enclosed within an async block. We
+//! // are using move to move the key into the block.  Finally, we pin
+//! // the block and return it.
 //! fn get(key: usize) -> DeduplicateFuture<String> {
 //!     let fut = async move {
 //!         let num = rand::thread_rng().gen_range(1000..2000);
@@ -41,8 +41,8 @@
 //! }
 //!
 //!
-//! /// All the comments from the get function apply here. In this case
-//! /// we are choosing to provide a closure rather than a function.
+//! // All the comments from the get function apply here. In this case
+//! // we are choosing to provide a closure rather than a function.
 //! let closure = |key: usize| -> DeduplicateFuture<String> {
 //!     let fut = async move {
 //!         let num = rand::thread_rng().gen_range(1000..2000);
@@ -53,11 +53,14 @@
 //!     Box::pin(fut)
 //! };
 //!
-//! /// We create two deduplicate instances, one from our function and one
-//! /// from our closure for purposes of illustration. We'd only create one
-//! /// in a real application.
+//! // We create two deduplicate instances, one from our function and one
+//! // from our closure for purposes of illustration. We'd only create one
+//! // in a real application.
 //! let deduplicate_with_fn = Deduplicate::new(get);
 //! let deduplicate_with_closure = Deduplicate::new(closure);
+//! // Our get is async, so use tokio_test::block_on to execute it.
+//! let value = tokio_test::block_on(deduplicate_with_fn.get(42));
+//! println!("value: {:?}", value);
 //! ```
 //!
 //! Now we can invoke get concurrently on our deduplicator and be sure that the expensive retrieve
