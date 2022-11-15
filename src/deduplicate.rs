@@ -4,11 +4,12 @@ use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::Arc;
+// Ok to use std mutex as never held over an await
+use std::sync::Mutex;
 use std::sync::Weak;
 
 use thiserror::Error;
 use tokio::sync::broadcast;
-use tokio::sync::Mutex;
 
 /// Boxed Future yielding an optional value.
 pub type DeduplicateFuture<V> = Pin<Box<dyn Future<Output = Option<V>> + Send>>;
@@ -88,7 +89,7 @@ where
     /// be called once. If the delegate panics or is cancelled, any concurrent accessors will get the
     /// error: [`DeduplicateError::Failed`].
     pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
-        let mut locked_wait_map = self.wait_map.lock().await;
+        let mut locked_wait_map = self.wait_map.lock().unwrap();
         match locked_wait_map.get(&key) {
             Some(weak) => {
                 if let Some(strong) = weak.upgrade() {
@@ -121,7 +122,7 @@ where
                 drop(locked_wait_map);
                 if let Some(storage) = &self.storage {
                     if let Some(value) = storage.get(&key) {
-                        let mut locked_wait_map = self.wait_map.lock().await;
+                        let mut locked_wait_map = self.wait_map.lock().unwrap();
                         let _ = locked_wait_map.remove(&key);
                         let _ = sender.send(Some(value.clone()));
 
@@ -134,14 +135,14 @@ where
                 tokio::spawn(async move {
                     let value = fut.await;
                     // Clean up the wait map before we send the value
-                    let mut locked_wait_map = wait_map.lock().await;
+                    let mut locked_wait_map = wait_map.lock().unwrap();
                     let _ = locked_wait_map.remove(&k);
                     let _ = sender.send(value);
                 });
                 // We only want one receiver to clean up the wait map, so this is the right place
                 // to do it.
                 let result = receiver.recv().await.map_err(|_| DeduplicateError::Failed);
-                let mut locked_wait_map = self.wait_map.lock().await;
+                let mut locked_wait_map = self.wait_map.lock().unwrap();
                 let _ = locked_wait_map.remove(&key);
                 let res = result?;
                 if let Some(storage) = &self.storage {
