@@ -2,6 +2,7 @@ use crate::cache::Cache;
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
 // Ok to use std mutex as never held over an await
@@ -59,7 +60,8 @@ where
     /// Note: If capacity is 0, then caching is disabled.
     pub fn with_capacity(delegate: G, capacity: usize) -> Self {
         let storage = if capacity > 0 {
-            Some(Cache::new(capacity))
+            let val = unsafe { NonZeroUsize::new_unchecked(capacity) };
+            Some(Cache::new(val))
         } else {
             None
         };
@@ -88,6 +90,8 @@ where
     /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
     /// be called once. If the delegate panics or is cancelled, any concurrent accessors will get the
     /// error: [`DeduplicateError::Failed`].
+    // Disable clippy false positive. We are explicitly dropping our lock, so clippy is wrong.
+    #[allow(clippy::await_holding_lock)]
     pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
         let mut locked_wait_map = self.wait_map.lock().unwrap();
         match locked_wait_map.get(&key) {

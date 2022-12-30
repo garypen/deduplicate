@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -17,7 +18,7 @@ where
     K: Hash + Eq + Send,
     V: Clone + Send,
 {
-    pub(crate) fn new(max_capacity: usize) -> Self {
+    pub(crate) fn new(max_capacity: NonZeroUsize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(LruCache::new(max_capacity))),
         }
