@@ -105,7 +105,7 @@ My benchmarking was against a very specific problem set and there's no guarantee
 
 The benchmark is highly concurrent and involves a O(n) search across a small (approx 10,000 entries) dataset of strings (loaded from disk) whenever there is a cache miss. `deduplicate` only provides an asynchronous interface, so the comparison is against the moka future::Cache cache.
 
-If you want to look at my criterion generated report, it's in the repo.
+If you want to look at my criterion generated [report](https://garypen.github.io/deduplicate/target/criterion/report/index.html), the clearest comparison is from clicking on the `get` link, but feel free to dig into the details.
 
 If you want to generate your own set of benchmarking comparisons, download the repo and run the following:
 
@@ -116,6 +116,8 @@ cargo bench --bench deduplicate -- --plotting-backend gnuplot --baseline 0.3.2
 This assumes that you have gnuplot installed on your system. (`apt install gnuplot`) and that you have installed [criterion](https://crates.io/crates/cargo-criterion) for benchmarking.
 
 I was quite surprised with the `moka` results. The performance didn't seem to improve when I varied the size of the cache. `deduplicate` improved with more cache until it had a cache which was sized at about 80% of the master dataset. That's what I would have expected from `moka` as well, although perhaps the source of this unexpected behaviour is the "batching" which `moka` performs under concurrent load. It's also possible that I've not written my benchmarking code correctly, but I've tried to be consistent between the two crates, so please let me know if you spot any errors I can correct.
+
+I'll put some thought into ways to remove the Mutex and maintain performance when I have more spare cycles.
 
 ## License
 
