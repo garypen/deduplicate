@@ -35,4 +35,8 @@ where
     pub(crate) fn clear(&self) {
         self.inner.lock().unwrap().clear();
     }
+
+    pub(crate) fn count(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
 }

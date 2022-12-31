@@ -95,6 +95,28 @@ This crate build upon the hard work and inspiration of several folks, some of wh
 
 Thanks for the input and good advice. All mistakes/errors are of course mine.
 
+## Benchmarks
+
+When I announced this crate on [reddit](https://www.reddit.com/r/rust/comments/yt9yaz/caching_asynchronous_request_deduplication/), the main feedback that I got was that I should do some re-working to examine removing the Mutex that is used to control access to the internal WaitMap. Rather than just go ahead and do this, I thought I'd do some comparisons with `moka` to see how the current performance compares.
+
+I like `moka` a lot, it's got a huge amount of functionality and is very good across a wide range of problem applications. However, for the specific scenarios that I benchmarked, I found `deduplicate` was more performant than `moka` even with the Mutex in place.
+
+My benchmarking was against a very specific problem set and there's no guarantee that `deduplicate` is always faster than `moka`. All my tests were performed on an AMD Ryzen 7 3700X 8-Core running ubuntu 20.04 with rustc 1.66.0. The comparison was between `deduplicate` 0.3.2 and `moka` 0.9.6.
+
+The benchmark is highly concurrent and involves a O(n) search across a small (approx 10,000 entries) dataset of strings (loaded from disk) whenever there is a cache miss. `deduplicate` only provides an asynchronous interface, so the comparison is against the moka future::Cache cache.
+
+If you want to look at my criterion generated report, it's in the repo.
+
+If you want to generate your own set of benchmarking comparisons, download the repo and run the following:
+
+```
+cargo bench --bench deduplicate -- --plotting-backend gnuplot --baseline 0.3.2
+```
+
+This assumes that you have gnuplot installed on your system. (`apt install gnuplot`) and that you have installed [criterion](https://crates.io/crates/cargo-criterion) for benchmarking.
+
+I was quite surprised with the `moka` results. The performance didn't seem to improve when I varied the size of the cache. `deduplicate` improved with more cache until it had a cache which was sized at about 80% of the master dataset. That's what I would have expected from `moka` as well, although perhaps the source of this unexpected behaviour is the "batching" which `moka` performs under concurrent load. It's also possible that I've not written my benchmarking code correctly, but I've tried to be consistent between the two crates, so please let me know if you spot any errors I can correct.
+
 ## License
 
 Apache 2.0 licensed. See LICENSE for details.

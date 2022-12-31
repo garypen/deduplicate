@@ -169,6 +169,14 @@ where
             Err(DeduplicateError::NoCache)
         }
     }
+
+    /// Return the number of cache entries in use. Will return 0 if no cache is configured.
+    pub fn count(&self) -> usize {
+        match &self.storage {
+            Some(s) => s.count(),
+            None => 0,
+        }
+    }
 }
 
 #[cfg(test)]
