@@ -5,12 +5,11 @@ use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
-// Ok to use std mutex as never held over an await
-use std::sync::Mutex;
 use std::sync::Weak;
 
 use thiserror::Error;
 use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 
 /// Boxed Future yielding an optional value.
 pub type DeduplicateFuture<V> = Pin<Box<dyn Future<Output = Option<V>> + Send>>;
@@ -36,7 +35,7 @@ pub enum DeduplicateError {
 #[derive(Clone)]
 pub struct Deduplicate<G, K, V>
 where
-    G: Fn(K) -> DeduplicateFuture<V> + Clone,
+    G: Fn(K) -> DeduplicateFuture<V>,
     K: Clone + Send + Eq + Hash,
     V: Clone + Send,
 {
@@ -47,7 +46,7 @@ where
 
 impl<G, K, V> Deduplicate<G, K, V>
 where
-    G: Fn(K) -> DeduplicateFuture<V> + Clone,
+    G: Fn(K) -> DeduplicateFuture<V>,
     K: Clone + Send + Eq + Hash + 'static,
     V: Clone + Send + 'static,
 {
@@ -93,7 +92,7 @@ where
     // Disable clippy false positive. We are explicitly dropping our lock, so clippy is wrong.
     #[allow(clippy::await_holding_lock)]
     pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
-        let mut locked_wait_map = self.wait_map.lock().unwrap();
+        let mut locked_wait_map = self.wait_map.lock().await;
         match locked_wait_map.get(&key) {
             Some(weak) => {
                 if let Some(strong) = weak.upgrade() {
@@ -126,7 +125,7 @@ where
                 drop(locked_wait_map);
                 if let Some(storage) = &self.storage {
                     if let Some(value) = storage.get(&key) {
-                        let mut locked_wait_map = self.wait_map.lock().unwrap();
+                        let mut locked_wait_map = self.wait_map.lock().await;
                         let _ = locked_wait_map.remove(&key);
                         let _ = sender.send(Some(value.clone()));
 
@@ -139,14 +138,14 @@ where
                 tokio::spawn(async move {
                     let value = fut.await;
                     // Clean up the wait map before we send the value
-                    let mut locked_wait_map = wait_map.lock().unwrap();
+                    let mut locked_wait_map = wait_map.lock().await;
                     let _ = locked_wait_map.remove(&k);
                     let _ = sender.send(value);
                 });
                 // We only want one receiver to clean up the wait map, so this is the right place
                 // to do it.
                 let result = receiver.recv().await.map_err(|_| DeduplicateError::Failed);
-                let mut locked_wait_map = self.wait_map.lock().unwrap();
+                let mut locked_wait_map = self.wait_map.lock().await;
                 let _ = locked_wait_map.remove(&key);
                 let res = result?;
                 if let Some(storage) = &self.storage {
@@ -200,7 +199,7 @@ mod tests {
 
     async fn test_harness<G>(deduplicate: Deduplicate<G, usize, String>)
     where
-        G: Fn(usize) -> DeduplicateFuture<String> + Clone,
+        G: Fn(usize) -> DeduplicateFuture<String>,
     {
         // Let's create our normal getter and use our deduplicating delegate.
         // (The same functionality as `get`, but without panicking.)

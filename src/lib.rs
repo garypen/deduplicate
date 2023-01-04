@@ -68,6 +68,51 @@
 //! don't disable the cache, then the results are cached for future requests and this can further
 //! speed up access times.
 //!
+//! # Storing a Deduplicate in a non-generic struct
+//!
+//! This isn't a full, working example, but more a suggestion on a way to make interacting with
+//! the [`Deduplicate`] simpler. Let's imagine that you need to store your [`Deduplicate`]
+//! instance within a non generic structure (this happened to me recently and I know it took
+//! me a couple of hours to figure out the answer).
+//!
+//! Here's what you need to do:
+//! ```ignore
+//! struct AuthenticationPlugin {
+//!     configuration: Conf,
+//!     jwks: Arc<
+//!         Deduplicate<
+//!             Box<dyn Fn(String) -> DeduplicateFuture<JwkSet> + Send + Sync + 'static>,
+//!             String,
+//!             JwkSet,
+//!         >,
+//!     >,
+//! }
+//! ```
+//! The main idea is to Box up the retrieval function so that we don't need to make the struct
+//! generic.
+//!
+//! You can then initialize this with something like:
+//! ```ignore
+//!         let getter: Box<dyn Fn(String) -> DeduplicateFuture<JwkSet> + Send + Sync + 'static> =
+//!             Box::new(|url: String| -> DeduplicateFuture<JwkSet> {
+//!                 let fut = async {
+//!                     let jwks: JwkSet =
+//!                         serde_json::from_value(reqwest::get(url).await.ok()?.json().await.ok()?)
+//!                             .ok()?;
+//!                     Some(jwks)
+//!                 };
+//!                 Box::pin(fut)
+//!             });
+//!         let deduplicator = Deduplicate::with_capacity(getter, 1);
+//!         Ok(AuthenticationPlugin {
+//!             configuration: init.config,
+//!             jwks: Arc::new(deduplicator),
+//!         })
+//! ```
+//! Don't get concerned about what the closure is doing (I'm retrieving a JwkSet for JWT
+//! validation), or the fact that it's held in an Arc (I need a cheap way to clone the Deduplicate)
+//! but focus on the fact that simply Boxing up the retrieval function solves the problem for us.
+
 mod cache;
 mod deduplicate;
 
