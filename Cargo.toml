@@ -1,6 +1,6 @@
 [package]
 name = "deduplicate"
-version = "0.3.3"
+version = "0.3.4"
 description = "caching, asynchronous, request deduplication"
 authors = [
   "garypen <garypen@gmail.com>",
