@@ -71,19 +71,20 @@ where
         }
     }
 
-    /// Update the delegate to use for future gets. This will also clear the internal cache.
-    pub fn set_delegate(&mut self, delegate: G) {
-        self.clear();
-        self.delegate = delegate;
-    }
-
     /// Clear the internal cache.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         if let Some(storage) = &self.storage {
             storage.clear();
         }
     }
 
+    /// Return the number of cache entries in use. Will return 0 if no cache is configured.
+    pub fn count(&self) -> usize {
+        match &self.storage {
+            Some(s) => s.count(),
+            None => 0,
+        }
+    }
     /// Use the delegate to get a value.
     ///
     /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
@@ -160,7 +161,7 @@ where
 
     /// Insert an entry directly into the cache. If there is no cache , this
     /// will fail with [`DeduplicateError::NoCache`].
-    pub fn insert(&mut self, key: K, value: V) -> Result<(), DeduplicateError> {
+    pub fn insert(&self, key: K, value: V) -> Result<(), DeduplicateError> {
         if let Some(storage) = &self.storage {
             storage.insert(key, value);
             Ok(())
@@ -169,12 +170,10 @@ where
         }
     }
 
-    /// Return the number of cache entries in use. Will return 0 if no cache is configured.
-    pub fn count(&self) -> usize {
-        match &self.storage {
-            Some(s) => s.count(),
-            None => 0,
-        }
+    /// Update the delegate to use for future gets. This will also clear the internal cache.
+    pub fn set_delegate(&mut self, delegate: G) {
+        self.clear();
+        self.delegate = delegate;
     }
 }
 
