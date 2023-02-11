@@ -48,7 +48,8 @@ fn cache_get(c: &mut Criterion) {
     let words = get_text();
 
     let mut group = c.benchmark_group("get");
-    // 0% = 0, 5% = 512, 10% = 1024, 20% = 2048, 40% = 4096, 80% = 8192
+    // Approx max cache size as % total amount of data
+    // 0% = 0, 0.6% = 64, 1.25% = 128, 2.5% = 256, 5% = 512, 10% = 1024, 20% = 2048, 40% = 4096, 80% = 8192
     for size in [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192].iter() {
         // Benchmark deduplicate
         let deduplicate = Deduplicate::with_capacity(getter, *size);
