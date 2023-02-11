@@ -4,6 +4,8 @@ use std::future::Future;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Weak;
 
@@ -42,6 +44,8 @@ where
     delegate: G,
     storage: Option<Cache<K, V>>,
     wait_map: WaitMap<K, V>,
+    request_deduplicated_counter: Arc<AtomicU64>,
+    request_total_counter: Arc<AtomicU64>,
 }
 
 impl<G, K, V> Deduplicate<G, K, V>
@@ -68,14 +72,18 @@ where
             delegate,
             wait_map: Arc::new(Mutex::new(HashMap::new())),
             storage,
+            request_deduplicated_counter: Arc::new(AtomicU64::new(0)),
+            request_total_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Clear the internal cache.
+    /// Clear the internal cache. This will also reset the request counters.
     pub fn clear(&self) {
         if let Some(storage) = &self.storage {
             storage.clear();
         }
+        self.request_deduplicated_counter.store(0, Ordering::SeqCst);
+        self.request_total_counter.store(0, Ordering::SeqCst);
     }
 
     /// Return the number of cache entries in use. Will return 0 if no cache is configured.
@@ -85,6 +93,17 @@ where
             None => 0,
         }
     }
+
+    /// Return the deduplicated request count.
+    pub fn request_deduplicated_count(&self) -> u64 {
+        self.request_deduplicated_counter.load(Ordering::SeqCst)
+    }
+
+    /// Return the total request count.
+    pub fn request_count(&self) -> u64 {
+        self.request_total_counter.load(Ordering::SeqCst)
+    }
+
     /// Use the delegate to get a value.
     ///
     /// Many concurrent accessors can attempt to get the same key, but the underlying get will only
@@ -93,9 +112,12 @@ where
     // Disable clippy false positive. We are explicitly dropping our lock, so clippy is wrong.
     #[allow(clippy::await_holding_lock)]
     pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
+        self.request_total_counter.fetch_add(1, Ordering::SeqCst);
         let mut locked_wait_map = self.wait_map.lock().await;
         match locked_wait_map.get(&key) {
             Some(weak) => {
+                self.request_deduplicated_counter
+                    .fetch_add(1, Ordering::SeqCst);
                 if let Some(strong) = weak.upgrade() {
                     let mut receiver = strong.subscribe();
                     // Very important to drop this...
@@ -130,6 +152,8 @@ where
                         let _ = locked_wait_map.remove(&key);
                         let _ = sender.send(Some(value.clone()));
 
+                        self.request_deduplicated_counter
+                            .fetch_add(1, Ordering::SeqCst);
                         return Ok(Some(value));
                     }
                 }
@@ -170,7 +194,8 @@ where
         }
     }
 
-    /// Update the delegate to use for future gets. This will also clear the internal cache.
+    /// Update the delegate to use for future gets. This will also clear the internal cache and
+    /// reset the request counters.
     pub fn set_delegate(&mut self, delegate: G) {
         self.clear();
         self.delegate = delegate;
@@ -241,9 +266,9 @@ mod tests {
             // Calculate the range of timings for each set of futures
             let dedup_range = dedup_result.last().unwrap().0 - dedup_result.first().unwrap().0;
             let slower_range = slower_result.last().unwrap().0 - slower_result.first().unwrap().0;
-            println!("iteration: {}", i);
-            println!("dedup_range: {:?}", dedup_range);
-            println!("slower_range: {:?}", slower_range);
+            println!("iteration: {i}");
+            println!("dedup_range: {dedup_range:?}");
+            println!("slower_range: {slower_range:?}");
             // The dedup range should be a few ms. The slower range will tend towards 1 second.
             // It's very unlikely that this assertion will be false, but I should note that it is
             // possible... In which case, ignore it and re-run the test.
@@ -260,8 +285,8 @@ mod tests {
             assert!(dedup_passed == 0 || dedup_passed == 100);
             assert_eq!(slower_passed, 100);
             assert!(dedup_passed <= slower_passed);
-            println!("dedup passed: {:?}", dedup_passed);
-            println!("slower passed: {:?}", slower_passed);
+            println!("dedup passed: {dedup_passed:?}");
+            println!("slower passed: {slower_passed:?}");
             println!("elapsed: {:?}\n", Instant::now() - start);
         }
     }

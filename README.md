@@ -97,6 +97,8 @@ Thanks for the input and good advice. All mistakes/errors are of course mine.
 
 ## Benchmarks
 
+SEE THE UPDATE BELOW FOR AN UPDATED COMPARISON
+
 When I announced this crate on [reddit](https://www.reddit.com/r/rust/comments/yt9yaz/caching_asynchronous_request_deduplication/), the main feedback that I got was that I should do some re-working to examine removing the Mutex that is used to control access to the internal WaitMap. Rather than just go ahead and do this, I thought I'd do some comparisons with `moka` to see how the current performance compares.
 
 I like `moka` a lot, it's got a huge amount of functionality and is very good across a wide range of problem applications. However, for the specific scenarios that I benchmarked, I found `deduplicate` was more performant than `moka` even with the Mutex in place.
@@ -105,19 +107,33 @@ My benchmarking was against a very specific problem set and there's no guarantee
 
 The benchmark is highly concurrent and involves a O(n) search across a small (approx 10,000 entries) dataset of strings (loaded from disk) whenever there is a cache miss. `deduplicate` only provides an asynchronous interface, so the comparison is against the moka future::Cache cache.
 
+(I've removed the links to the old data, since they are not representative of the current state of things. See the update below for the latest results. I'll leave my speculation and thoughts here to provide some context for the update.)
+
+I was quite surprised with the `moka` results. The performance didn't seem to improve when I varied the size of the cache. `deduplicate` improved with more cache until it had a cache which was sized at about 80% of the master dataset. That's what I would have expected from `moka` as well, although perhaps the source of this unexpected behaviour is the "batching" which `moka` performs under concurrent load. It's also possible that I've not written my benchmarking code correctly, but I've tried to be consistent between the two crates, so please let me know if you spot any errors I can correct.
+
+I'll put some thought into ways to remove the Mutex and maintain performance when I have more spare cycles.
+
+### Update (11/02/2023)
+
+The primary `moka` author raised an [issue](https://github.com/garypen/deduplicate/issues/1) against the benchmarks (thank you!) and provided an explanation as to why `moka` did not perform as well as I expected.
+
+I've merged the PR to update the benchmarks and generated a new set that show much better results for `moka`.
+
+I generated the updated results on the same system, with a newer rust compiler (1.67.1) and comparing `deduplicate` (0.3.6) with `moka` (0.10.0).
+
 If you want to look at my criterion generated [report](https://garypen.github.io/deduplicate/target/criterion/report/index.html), the clearest comparison is from clicking on the `get` link, but feel free to dig into the details.
 
 If you want to generate your own set of benchmarking comparisons, download the repo and run the following:
 
 ```
-cargo bench --bench deduplicate -- --plotting-backend gnuplot --baseline 0.3.2
+cargo bench --bench deduplicate -- --plotting-backend gnuplot --baseline 0.3.6
 ```
 
 This assumes that you have gnuplot installed on your system. (`apt install gnuplot`) and that you have installed [criterion](https://crates.io/crates/cargo-criterion) for benchmarking.
 
-I was quite surprised with the `moka` results. The performance didn't seem to improve when I varied the size of the cache. `deduplicate` improved with more cache until it had a cache which was sized at about 80% of the master dataset. That's what I would have expected from `moka` as well, although perhaps the source of this unexpected behaviour is the "batching" which `moka` performs under concurrent load. It's also possible that I've not written my benchmarking code correctly, but I've tried to be consistent between the two crates, so please let me know if you spot any errors I can correct.
+If I had to draw any conclusions from the updated reports, I'd say there's not much performance difference, but `moka` seems to perform better when the cache is limited to a small % of the total number of possible results with `deduplicate` performing better as the size of the cache increases.
 
-I'll put some thought into ways to remove the Mutex and maintain performance when I have more spare cycles.
+It's probably worth looking at the mutex now... :)
 
 ## License
 

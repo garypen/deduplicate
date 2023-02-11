@@ -17,7 +17,7 @@ fn get_text() -> Vec<String> {
     use std::io::Read;
     const DATA: &[&str] = &["data/1984.txt", "data/sun-rising.txt"];
     let mut contents = String::new();
-    File::open(&DATA[0])
+    File::open(DATA[0])
         .unwrap()
         .read_to_string(&mut contents)
         .unwrap();
@@ -48,11 +48,11 @@ fn cache_get(c: &mut Criterion) {
     let words = get_text();
 
     let mut group = c.benchmark_group("get");
-    // 0% = 0, 5% = 512, 10% = 1024, 20% = 2048, 40% = 4096, 80% = 8192
+    // Approx max cache size as % total amount of data
+    // 0% = 0, 0.6% = 64, 1.25% = 128, 2.5% = 256, 5% = 512, 10% = 1024, 20% = 2048, 40% = 4096, 80% = 8192
     for size in [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192].iter() {
         // Benchmark deduplicate
         let deduplicate = Deduplicate::with_capacity(getter, *size);
-        let get_count = Arc::new(AtomicU64::default());
         group.bench_with_input(
             BenchmarkId::new("deduplicate get", size),
             &words,
@@ -61,15 +61,15 @@ fn cache_get(c: &mut Criterion) {
                     .iter(|| async {
                         let word = &words[thread_rng().gen_range(0..words.len())];
                         let _ = deduplicate.get(word.to_string()).await;
-                        get_count.fetch_add(1, atomic::Ordering::AcqRel);
                     })
             },
         );
-        let get_count = get_count.load(atomic::Ordering::Acquire);
         eprintln!(
-            "deduplicate cache used - count: {}, get_count: {}",
+            "deduplicate cache used - count: {}, get_count: {}, hit_ratio: {:.2}%",
             deduplicate.count(),
-            get_count
+            deduplicate.request_count(),
+            deduplicate.request_deduplicated_count() as f64 / deduplicate.request_count() as f64
+                * 100.0,
         );
 
         // Benchmark moka
@@ -89,8 +89,7 @@ fn cache_get(c: &mut Criterion) {
                             // Hit
                             hit_count.fetch_add(1, atomic::Ordering::AcqRel);
                         }
-                        None | Some(_) => {
-                            (); // Miss
+                        None | Some(_) => { // Miss
                         }
                     }
                     get_count.fetch_add(1, atomic::Ordering::AcqRel);
