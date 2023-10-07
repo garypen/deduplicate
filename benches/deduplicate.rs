@@ -7,7 +7,7 @@ use deduplicate::Deduplicate;
 use deduplicate::DeduplicateFuture;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use moka::future::{Cache, ConcurrentCacheExt};
+use moka::future::{Cache};
 use rand::{thread_rng, Rng};
 
 // Utility function for loading a vec of strings from disk
@@ -97,7 +97,7 @@ fn cache_get(c: &mut Criterion) {
                     // Process pending evictions. Without this, moka will hold more
                     // entries than the max capacity, which will skew the benchmarking
                     // result by increasing the hit ratio.
-                    moka.sync();
+                    moka.run_pending_tasks().await;
                 })
         });
 
