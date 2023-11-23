@@ -1,4 +1,5 @@
 use crate::cache::Cache;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
@@ -82,7 +83,8 @@ where
         if let Some(storage) = &self.storage {
             storage.clear();
         }
-        self.request_deduplicated_counter.store(0, Ordering::Relaxed);
+        self.request_deduplicated_counter
+            .store(0, Ordering::Relaxed);
         self.request_total_counter.store(0, Ordering::Relaxed);
     }
 
@@ -200,6 +202,16 @@ where
         self.clear();
         self.delegate = delegate;
     }
+
+    /// Return all the cached entries.
+    pub fn entries(&self) -> Vec<(K, V)> {
+        match &self.storage {
+            Some(storage) => storage.entries(),
+            None => {
+                vec![]
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -310,5 +322,35 @@ mod tests {
     #[tokio::test]
     async fn it_deduplicates_correctly_without_cache() {
         test_harness(Deduplicate::with_capacity(get, 0)).await
+    }
+
+    // Test that entries works correctly
+    #[tokio::test]
+    async fn it_returns_entries() {
+        let get_x = |x: usize| -> DeduplicateFuture<String> {
+            let fut = async move { Some(x.to_string()) };
+            Box::pin(fut)
+        };
+        let dedup = Deduplicate::new(get_x);
+
+        assert_eq!(
+            dedup
+                .get(1)
+                .await
+                .expect("it works")
+                .expect("it finds something"),
+            1.to_string()
+        );
+        assert_eq!(
+            dedup
+                .get(2)
+                .await
+                .expect("it works")
+                .expect("it finds something"),
+            2.to_string()
+        );
+        let mut entries = dedup.entries();
+        entries.sort();
+        assert_eq!(entries, vec![(1, 1.to_string()), (2, 2.to_string())]);
     }
 }

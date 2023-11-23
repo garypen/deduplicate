@@ -9,13 +9,13 @@ use lru::LruCache;
 ///
 /// Retrieved results are stored here.
 #[derive(Clone)]
-pub(crate) struct Cache<K: Hash + Eq + Send, V: Clone> {
+pub(crate) struct Cache<K: Clone + Hash + Eq + Send, V: Clone> {
     inner: Arc<Mutex<LruCache<K, V>>>,
 }
 
 impl<K, V> Cache<K, V>
 where
-    K: Hash + Eq + Send,
+    K: Clone + Hash + Eq + Send,
     V: Clone + Send,
 {
     pub(crate) fn new(max_capacity: NonZeroUsize) -> Self {
@@ -38,5 +38,13 @@ where
 
     pub(crate) fn count(&self) -> usize {
         self.inner.lock().len()
+    }
+
+    pub(crate) fn entries(&self) -> Vec<(K, V)> {
+        self.inner
+            .lock()
+            .iter()
+            .map(|(k, v)| ((*k).clone(), v.clone()))
+            .collect()
     }
 }
