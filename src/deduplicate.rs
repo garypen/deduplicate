@@ -82,8 +82,8 @@ where
         if let Some(storage) = &self.storage {
             storage.clear();
         }
-        self.request_deduplicated_counter.store(0, Ordering::SeqCst);
-        self.request_total_counter.store(0, Ordering::SeqCst);
+        self.request_deduplicated_counter.store(0, Ordering::Relaxed);
+        self.request_total_counter.store(0, Ordering::Relaxed);
     }
 
     /// Return the number of cache entries in use. Will return 0 if no cache is configured.
@@ -96,12 +96,12 @@ where
 
     /// Return the deduplicated request count.
     pub fn request_deduplicated_count(&self) -> u64 {
-        self.request_deduplicated_counter.load(Ordering::SeqCst)
+        self.request_deduplicated_counter.load(Ordering::Relaxed)
     }
 
     /// Return the total request count.
     pub fn request_count(&self) -> u64 {
-        self.request_total_counter.load(Ordering::SeqCst)
+        self.request_total_counter.load(Ordering::Relaxed)
     }
 
     /// Use the delegate to get a value.
@@ -112,12 +112,12 @@ where
     // Disable clippy false positive. We are explicitly dropping our lock, so clippy is wrong.
     #[allow(clippy::await_holding_lock)]
     pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
-        self.request_total_counter.fetch_add(1, Ordering::SeqCst);
+        self.request_total_counter.fetch_add(1, Ordering::Relaxed);
         let mut locked_wait_map = self.wait_map.lock().await;
         match locked_wait_map.get(&key) {
             Some(weak) => {
                 self.request_deduplicated_counter
-                    .fetch_add(1, Ordering::SeqCst);
+                    .fetch_add(1, Ordering::Relaxed);
                 if let Some(strong) = weak.upgrade() {
                     let mut receiver = strong.subscribe();
                     // Very important to drop this...
@@ -148,12 +148,12 @@ where
                 drop(locked_wait_map);
                 if let Some(storage) = &self.storage {
                     if let Some(value) = storage.get(&key) {
+                        self.request_deduplicated_counter
+                            .fetch_add(1, Ordering::Relaxed);
                         let mut locked_wait_map = self.wait_map.lock().await;
                         let _ = locked_wait_map.remove(&key);
                         let _ = sender.send(Some(value.clone()));
 
-                        self.request_deduplicated_counter
-                            .fetch_add(1, Ordering::SeqCst);
                         return Ok(Some(value));
                     }
                 }

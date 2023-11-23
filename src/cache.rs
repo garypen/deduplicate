@@ -1,7 +1,7 @@
+use parking_lot::Mutex;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use lru::LruCache;
 
@@ -25,18 +25,18 @@ where
     }
 
     pub(crate) fn get(&self, key: &K) -> Option<V> {
-        self.inner.lock().unwrap().get(key).cloned()
+        self.inner.lock().get(key).cloned()
     }
 
     pub(crate) fn insert(&self, key: K, value: V) {
-        self.inner.lock().unwrap().put(key, value);
+        self.inner.lock().put(key, value);
     }
 
     pub(crate) fn clear(&self) {
-        self.inner.lock().unwrap().clear();
+        self.inner.lock().clear();
     }
 
     pub(crate) fn count(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner.lock().len()
     }
 }
