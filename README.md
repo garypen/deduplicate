@@ -82,7 +82,7 @@ async fn main() {
 
 ```toml
 [dependencies]
-deduplicate = "0.3"
+deduplicate = "0.4"
 ```
 
 ## Acknowledgements
