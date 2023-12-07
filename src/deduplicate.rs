@@ -10,9 +10,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Weak;
 
+use parking_lot::Mutex;
 use thiserror::Error;
 use tokio::sync::broadcast;
-use tokio::sync::Mutex;
 
 /// Boxed Future yielding an optional value.
 pub type DeduplicateFuture<V> = Pin<Box<dyn Future<Output = Option<V>> + Send>>;
@@ -115,7 +115,7 @@ where
     #[allow(clippy::await_holding_lock)]
     pub async fn get(&self, key: K) -> Result<Option<V>, DeduplicateError> {
         self.request_total_counter.fetch_add(1, Ordering::Relaxed);
-        let mut locked_wait_map = self.wait_map.lock().await;
+        let mut locked_wait_map = self.wait_map.lock();
         match locked_wait_map.get(&key) {
             Some(weak) => {
                 self.request_deduplicated_counter
@@ -147,32 +147,28 @@ where
                 let sender = Arc::new(sender);
                 locked_wait_map.insert(key.clone(), Arc::downgrade(&sender));
 
-                drop(locked_wait_map);
                 if let Some(storage) = &self.storage {
                     if let Some(value) = storage.get(&key) {
                         self.request_deduplicated_counter
                             .fetch_add(1, Ordering::Relaxed);
-                        let mut locked_wait_map = self.wait_map.lock().await;
                         let _ = locked_wait_map.remove(&key);
                         let _ = sender.send(Some(value.clone()));
 
                         return Ok(Some(value));
                     }
                 }
+                drop(locked_wait_map);
                 let fut = (self.delegate)(key.clone());
-                let k = key.clone();
-                let wait_map = self.wait_map.clone();
                 tokio::spawn(async move {
                     let value = fut.await;
-                    // Clean up the wait map before we send the value
-                    let mut locked_wait_map = wait_map.lock().await;
-                    let _ = locked_wait_map.remove(&k);
+                    // If we panic before this future completes, we'll get an error in the receiver
+                    // Either way, the wait_map lock will be cleaned up.
                     let _ = sender.send(value);
                 });
                 // We only want one receiver to clean up the wait map, so this is the right place
                 // to do it.
                 let result = receiver.recv().await.map_err(|_| DeduplicateError::Failed);
-                let mut locked_wait_map = self.wait_map.lock().await;
+                let mut locked_wait_map = self.wait_map.lock();
                 let _ = locked_wait_map.remove(&key);
                 let res = result?;
                 if let Some(storage) = &self.storage {
