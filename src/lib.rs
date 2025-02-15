@@ -32,7 +32,7 @@
 //! // the block and return it.
 //! fn get(key: usize) -> DeduplicateFuture<String> {
 //!     let fut = async move {
-//!         let num = rand::thread_rng().gen_range(1000..2000);
+//!         let num = rand::rng().random_range(1000..2000);
 //!         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 //!
 //!         Some(format!("key: {}, duration: {}", key, num))
@@ -45,7 +45,7 @@
 //! // we are choosing to provide a closure rather than a function.
 //! let closure = |key: usize| -> DeduplicateFuture<String> {
 //!     let fut = async move {
-//!         let num = rand::thread_rng().gen_range(1000..2000);
+//!         let num = rand::rng().random_range(1000..2000);
 //!         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 //!
 //!         Some(format!("key: {}, duration: {}", key, num))
