@@ -11,7 +11,7 @@ use rand::Rng;
 /// numbers.
 fn get(_key: usize) -> DeduplicateFuture<String> {
     let fut = async {
-        let num = rand::thread_rng().gen_range(1000..2000);
+        let num = rand::rng().random_range(1000..2000);
         tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
         if num % 2 == 0 {

@@ -218,7 +218,7 @@ mod tests {
 
     fn get(_key: usize) -> DeduplicateFuture<String> {
         let fut = async {
-            let num = rand::thread_rng().gen_range(1000..2000);
+            let num = rand::rng().random_range(1000..2000);
             tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
             if num % 2 == 0 {
@@ -236,7 +236,7 @@ mod tests {
         // Let's create our normal getter and use our deduplicating delegate.
         // (The same functionality as `get`, but without panicking.)
         let no_panic_get = |_x: usize| async {
-            let num = rand::thread_rng().gen_range(1000..2000);
+            let num = rand::rng().random_range(1000..2000);
             tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
             Some("test".to_string())
@@ -304,7 +304,7 @@ mod tests {
     async fn it_deduplicates_correctly_with_cache() {
         let no_panic_get = |_x: usize| -> DeduplicateFuture<String> {
             let fut = async {
-                let num = rand::thread_rng().gen_range(1000..2000);
+                let num = rand::rng().random_range(1000..2000);
                 tokio::time::sleep(tokio::time::Duration::from_millis(num)).await;
 
                 Some("test".to_string())
