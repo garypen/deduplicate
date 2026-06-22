@@ -22,7 +22,7 @@
 //! use deduplicate::Deduplicate;
 //! use deduplicate::DeduplicateError;
 //!
-//! use rand::Rng;
+//! use rand::RngExt;
 //!
 //!
 //! // This is our slow accessor function. Note that we must take a single

@@ -213,7 +213,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
+    use rand::RngExt;
     use std::time::Instant;
 
     fn get(_key: usize) -> DeduplicateFuture<String> {
