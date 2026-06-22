@@ -4,7 +4,7 @@ use std::time::Instant;
 use deduplicate::Deduplicate;
 use deduplicate::DeduplicateFuture;
 
-use rand::Rng;
+use rand::RngExt;
 
 /// If our delegated getter panics, all our concurrent gets will
 /// fail. Let's cause that to happen sometimes by panicking on even
